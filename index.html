@@ -32,12 +32,13 @@ SoundSongStopCh: addr = 0x806E05E0 + Z * 0x10
 var TWO32 = 4294967296;   // 2^32
 
 // 書き込み経路
-//   base   = 添字 0 のときの書き込み先
-//   stride = 添字が 1 増えるごとに進むバイト数
+//   base      = 添字 0 のときの書き込み先
+//   stride    = 添字が 1 増えるごとに進むバイト数
+//   storeSize = 書き込み幅
 var BRANCHES = [
-  { name: "SoundEfxStop",    base: 0x806E0640, stride: 0x88  },
-  { name: "SoundSSStopCh",   base: 0x806E1E80, stride: 0x138 },
-  { name: "SoundSongStopCh", base: 0x806E05E0, stride: 0x10  }
+  { name: "SoundEfxStop",    base: 0x806E0640, stride: 0x88,  storeSize: 2 },
+  { name: "SoundSSStopCh",   base: 0x806E1E80, stride: 0x138, storeSize: 2 },
+  { name: "SoundSongStopCh", base: 0x806E05E0, stride: 0x10,  storeSize: 4 }
 ];
 
 
@@ -97,14 +98,34 @@ function render(){
     return;
   }
 
+  // キャッシュ側とミラーは同じ場所なので、0xC...で入力されても0x8...に直して両方まとめて調べる。
+  var target = parseInt(text, 16);
+  if (target >= 0xC0000000) target -= 0x40000000;
+
   var rows = "";
   BRANCHES.forEach(function(branch){
-    solve(parseInt(text, 16), branch.base, branch.stride)
-      .map(function(z){
-        return { bits: z, value: bitsToFloat(z) };
-      })
-      // 値の小さい順に並べ直す
-      .sort(function(x, y){
+
+
+    // 0xC...への4バイト未満の書き込みは、8バイト境界のブロックごと潰れる。
+    // 標的が8の倍数でないときはブロックの先頭が標的の4バイト手前になり、そこから書いて後半で標的に届く。
+    var mirror = (target + 0x40000000) >>> 0;
+    var writes = [
+      { addr: target, bytes: branch.storeSize },
+      branch.storeSize < 4
+        ? { addr: (mirror & ~7) >>> 0, bytes: 8 }
+        : { addr: mirror,             bytes: branch.storeSize }
+    ];
+
+    // 1つの配列にまとめる
+    var found = [];
+    writes.forEach(function(write){
+      solve(write.addr, branch.base, branch.stride).forEach(function(z){
+        found.push({ bits: z, value: bitsToFloat(z), bytes: write.bytes, addr: write.addr });
+      });
+    });
+
+    // 値の小さい順に並べ直す
+    found.sort(function(x, y){
         return x.value - y.value;
       })
       .forEach(function(s){
@@ -112,6 +133,8 @@ function render(){
         rows += "<tr><td>" + branch.name
               + "</td><td>0x" + hex(s.bits)
               + "</td><td>" + s.value
+              + "</td><td>" + s.bytes
+              + "</td><td>0x" + hex(s.addr)
               + "</td><td>" + (s.value >= min && s.value <= max ? "O" : "-")
               + "</td></tr>";
       });
@@ -119,7 +142,7 @@ function render(){
 
   // 行が1つも無いときはNo solution.と表示
   out.innerHTML = rows
-    ? "<table><tr><th>Branch</th><th>Z coordinate</th><th>Decimal</th><th>In range</th></tr>" + rows + "</table>"
+    ? "<table><tr><th>Branch</th><th>Z coordinate </th><th>Decimal</th><th>Bytes</th><th>Write addr</th><th>In range</th></tr>" + rows + "</table>"
     : "<p>No solution.</p>";
 }
 

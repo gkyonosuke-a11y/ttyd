@@ -9,6 +9,7 @@ body{font-family:sans-serif; margin:20px}
 input{font:inherit; width:10ch}
 table{border-collapse:collapse; margin-top:20px}
 th,td{border:1px solid #ccc; padding:4px 10px; text-align:left}
+tr.candidate td{background:#dcf0dc}
 </style>
 </head>
 <body>
@@ -30,6 +31,10 @@ SoundSongStopCh: addr = 0x806E05E0 + Z * 0x10
 // AMW用に書き込みたいアドレスからZ座標を求める
 //======script用の設定==============================
 var TWO32 = 4294967296;   // 2^32
+
+// 候補とみなすZの絶対値の下限。
+// これより0に近い値は範囲内に入っていても座標として狙えないので色を付けない
+var MIN_ABS = 0.0001;
 
 // 書き込み経路
 //   base      = 添字 0 のときの書き込み先
@@ -129,13 +134,17 @@ function render(){
         return x.value - y.value;
       })
       .forEach(function(s){
+        // 範囲内で、かつ0に近すぎないものを候補として色を付ける
+        var inRange   = s.value >= min && s.value <= max;
+        var candidate = inRange && Math.abs(s.value) >= MIN_ABS;
+
         // 10進は数値をそのまま連結
-        rows += "<tr><td>" + branch.name
+        rows += "<tr" + (candidate ? " class=\"candidate\"" : "") + "><td>" + branch.name
               + "</td><td>0x" + hex(s.bits)
               + "</td><td>" + s.value
               + "</td><td>" + s.bytes
               + "</td><td>0x" + hex(s.addr)
-              + "</td><td>" + (s.value >= min && s.value <= max ? "O" : "-")
+              + "</td><td>" + (inRange ? "O" : "-")
               + "</td></tr>";
       });
   });

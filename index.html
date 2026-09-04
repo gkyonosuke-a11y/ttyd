@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AMW Z Solver</title>
+<style>
+body{font-family:sans-serif; margin:20px}
+input{font:inherit; width:10ch}
+table{border-collapse:collapse; margin-top:20px}
+th,td{border:1px solid #ccc; padding:4px 10px; text-align:left}
+</style>
+</head>
+<body>
+
+<h1>AMW Z Solver</h1>
+
+<!--======初期表示==================================-->
+<p>Target address <input id="a" value="C041AED8"></p>
+<p>Z range <input id="lo" type="number" step="any" value="-135"> – <input id="hi" type="number" step="any" value="167"></p>
+
+<p>
+SoundEfxStop: addr = 0x806E0640 + Z * 0x88<br>
+SoundSSStopCh: addr = 0x806E1E80 + Z * 0x138<br>
+SoundSongStopCh: addr = 0x806E05E0 + Z * 0x10
+</p>
+
+<div id="out"></div>
+<script>
+// AMW用に書き込みたいアドレスからZ座標を求める
+//======script用の設定==============================
+var TWO32 = 4294967296;   // 2^32
+
+// 書き込み経路
+//   base   = 添字 0 のときの書き込み先
+//   stride = 添字が 1 増えるごとに進むバイト数
+var BRANCHES = [
+  { name: "SoundEfxStop",    base: 0x806E0640, stride: 0x88  },
+  { name: "SoundSSStopCh",   base: 0x806E1E80, stride: 0x138 },
+  { name: "SoundSongStopCh", base: 0x806E05E0, stride: 0x10  }
+];
+
+
+//======表示用の変換==============================
+var buf     = new ArrayBuffer(4);
+var asBits  = new Uint32Array(buf);
+var asFloat = new Float32Array(buf);
+
+// ビット列 float32として読み直す
+function bitsToFloat(bits){
+  asBits[0] = bits;
+  return asFloat[0];
+}
+
+// 16進数8桁(ゼロ埋め)に変換
+function hex(n){
+  return ("0000000" + n.toString(16).toUpperCase()).slice(-8);
+}
+
+
+//======計算==============================
+// 分岐がaddrに書き込むようなZを全部返す(下記を満たす z の一覧)
+//     base + z * stride == addr   (mod 2^32)
+function solve(addr, base, stride){
+
+  //z * stride == target(mod 2^32)の形にする
+  //+TWO32はJSの%が左辺負のとき負を返すのを避けるため
+  var target = (addr - base + TWO32) % TWO32;
+
+  // mod を外して整数の等式にするとz * stride = target + m * 2^32
+  // zは32bitなのでz * stride < stride * 2^32でmは0~stride-1のどれかにしかならない
+  // mを総当たりして、割り切れたものが解
+  var all = [];
+  for (var m = 0; m < stride; m++){
+    var z = (target + m * TWO32) / stride;
+    if (Number.isInteger(z)) all.push(z);
+  }
+  return all;
+}
+
+
+//======結果表示==============================
+
+// 入力を読んで表を作り直す
+function render(){
+  var text = a.value.trim().replace(/^0x/i, "");
+
+  // 範囲欄が空なら上限なし・下限なしとして扱う
+  var min = parseFloat(lo.value);
+  var max = parseFloat(hi.value);
+  if (isNaN(min)) min = -Infinity;
+  if (isNaN(max)) max = Infinity;
+
+  // 16進数で8桁のときだけ解く
+  if (!/^[0-9a-f]{8}$/i.test(text)){
+    out.innerHTML = "";
+    return;
+  }
+
+  var rows = "";
+  BRANCHES.forEach(function(branch){
+    solve(parseInt(text, 16), branch.base, branch.stride)
+      .map(function(z){
+        return { bits: z, value: bitsToFloat(z) };
+      })
+      // 値の小さい順に並べ直す
+      .sort(function(x, y){
+        return x.value - y.value;
+      })
+      .forEach(function(s){
+        // 10進は数値をそのまま連結
+        rows += "<tr><td>" + branch.name
+              + "</td><td>0x" + hex(s.bits)
+              + "</td><td>" + s.value
+              + "</td><td>" + (s.value >= min && s.value <= max ? "O" : "-")
+              + "</td></tr>";
+      });
+  });
+
+  // 行が1つも無いときはNo solution.と表示
+  out.innerHTML = rows
+    ? "<table><tr><th>Branch</th><th>Z bits</th><th>Decimal</th><th>In range</th></tr>" + rows + "</table>"
+    : "<p>No solution.</p>";
+}
+
+[a, lo, hi].forEach(function(el){ el.oninput = render; });
+render();
+</script>
+</body>
+</html>

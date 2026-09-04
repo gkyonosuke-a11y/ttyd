@@ -19,6 +19,7 @@ tr.candidate td{background:#dcf0dc}
 <!--======初期表示==================================-->
 <p>Target address <input id="a" value="C041AED8"></p>
 <p>Z range <input id="lo" type="number" step="any" value="-135"> – <input id="hi" type="number" step="any" value="167"></p>
+<p>Min |Z| <input id="eps" type="number" step="any" value="0.0001"></p>
 
 <p>
 SoundEfxStop: addr = 0x806E0640 + Z * 0x88<br>
@@ -31,10 +32,6 @@ SoundSongStopCh: addr = 0x806E05E0 + Z * 0x10
 // AMW用に書き込みたいアドレスからZ座標を求める
 //======script用の設定==============================
 var TWO32 = 4294967296;   // 2^32
-
-// 候補とみなすZの絶対値の下限。
-// これより0に近い値は範囲内に入っていても座標として狙えないので色を付けない
-var MIN_ABS = 0.0001;
 
 // 書き込み経路
 //   base      = 添字 0 のときの書き込み先
@@ -91,11 +88,15 @@ function solve(addr, base, stride){
 function render(){
   var text = a.value.trim().replace(/^0x/i, "");
 
-  // 範囲欄が空なら上限なし・下限なしとして扱う
+  // Z座標の取りえる範囲。範囲欄が空なら上限なし・下限なし
   var min = parseFloat(lo.value);
   var max = parseFloat(hi.value);
   if (isNaN(min)) min = -Infinity;
   if (isNaN(max)) max = Infinity;
+
+  // 候補とみなすZの絶対値の下限。空欄なら下限なし
+  var minAbs = parseFloat(eps.value);
+  if (isNaN(minAbs)) minAbs = 0;
 
   // 16進数で8桁のときだけ解く
   if (!/^[0-9a-f]{8}$/i.test(text)){
@@ -136,7 +137,8 @@ function render(){
       .forEach(function(s){
         // 範囲内で、かつ0に近すぎないものを候補として色を付ける
         var inRange   = s.value >= min && s.value <= max;
-        var candidate = inRange && Math.abs(s.value) >= MIN_ABS;
+        var overMin   = Math.abs(s.value) >= minAbs;
+        var candidate = inRange && overMin;
 
         // 10進は数値をそのまま連結
         rows += "<tr" + (candidate ? " class=\"candidate\"" : "") + "><td>" + branch.name
@@ -145,17 +147,18 @@ function render(){
               + "</td><td>" + s.bytes
               + "</td><td>0x" + hex(s.addr)
               + "</td><td>" + (inRange ? "O" : "-")
+              + "</td><td>" + (overMin ? "O" : "-")
               + "</td></tr>";
       });
   });
 
   // 行が1つも無いときはNo solution.と表示
   out.innerHTML = rows
-    ? "<table><tr><th>Branch</th><th>Z coordinate</th><th>Decimal</th><th>Write Bytes</th><th>Write addr</th><th>In range</th></tr>" + rows + "</table>"
+    ? "<table><tr><th>Branch</th><th>Z coordinate</th><th>Decimal</th><th>Write Bytes</th><th>Write addr</th><th>In range</th><th>Min |Z|</th></tr>" + rows + "</table>"
     : "<p>No solution.</p>";
 }
 
-[a, lo, hi].forEach(function(el){ el.oninput = render; });
+[a, lo, hi, eps].forEach(function(el){ el.oninput = render; });
 render();
 </script>
 </body>

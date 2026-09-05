@@ -10,21 +10,35 @@ input{font:inherit; width:10ch}
 table{border-collapse:collapse; margin-top:20px}
 th,td{border:1px solid #ccc; padding:4px 10px; text-align:left}
 tr.candidate td{background:#dcf0dc}
+select{font:inherit}
+input[type=radio]{width:auto; margin-right:4px}
+label{margin-right:14px; white-space:nowrap}
 </style>
 </head>
 <body>
 
-<h1>AMW Z Solver</h1>
+<h1>AMW Z Solver V4.0</h1>
 
 <!--======初期表示==================================-->
+<p>Region
+<select id="reg">
+  <option value="0">JP</option>
+  <option value="1">US</option>
+  <option value="2">EU1</option>
+  <option value="3">EU2</option>
+</select></p>
+
 <p>Target address <input id="a" value="8041AEDC"></p>
 <p>Z range <input id="lo" type="number" step="any" value="-135"> – <input id="hi" type="number" step="any" value="167"></p>
 <p>Min |Z| <input id="eps" type="number" step="any" value="0.0001"></p>
 
-<p>
-SoundEfxStop: addr = 0x806E0640 + Z * 0x88<br>
-SoundSSStopCh: addr = 0x806E1E80 + Z * 0x138<br>
-SoundSongStopCh: addr = 0x806E05E0 + Z * 0x10
+<p id="formulas"></p>
+
+<p>Branch
+<label><input type="radio" name="branch" value="-1" checked>All</label>
+<label><input type="radio" name="branch" value="0">SoundEfxStop</label>
+<label><input type="radio" name="branch" value="1">SoundSSStopCh</label>
+<label><input type="radio" name="branch" value="2">SoundSongStopCh</label>
 </p>
 
 <div id="out"></div>
@@ -37,11 +51,31 @@ var TWO32 = 4294967296;   // 2^32
 //   base      = 添字 0 のときの書き込み先
 //   stride    = 添字が 1 増えるごとに進むバイト数
 //   storeSize = 書き込み幅
-var BRANCHES = [
+var BRANCHES_JP = [
   { name: "SoundEfxStop",    base: 0x806E0640, stride: 0x88,  storeSize: 2 },
   { name: "SoundSSStopCh",   base: 0x806E1E80, stride: 0x138, storeSize: 2 },
   { name: "SoundSongStopCh", base: 0x806E05E0, stride: 0x10,  storeSize: 4 }
 ];
+
+var BRANCHES_US = [
+  { name: "SoundEfxStop",    base: 0x806EED40, stride: 0x88,  storeSize: 2 },
+  { name: "SoundSSStopCh",   base: 0x806F0580, stride: 0x138, storeSize: 2 },
+  { name: "SoundSongStopCh", base: 0x80679260, stride: 0x10,  storeSize: 4 }
+];
+
+var BRANCHES_EU1 = [
+  { name: "SoundEfxStop",    base: 0x8072FC60, stride: 0x88,  storeSize: 2 },
+  { name: "SoundSSStopCh",   base: 0x807314A0, stride: 0x138, storeSize: 2 },
+  { name: "SoundSongStopCh", base: 0x806BA180, stride: 0x10,  storeSize: 4 }
+];
+
+var BRANCHES_EU2 = [
+  { name: "SoundEfxStop",    base: 0x806FB860, stride: 0x88,  storeSize: 2 },
+  { name: "SoundSSStopCh",   base: 0x806FD0A0, stride: 0x138, storeSize: 2 },
+  { name: "SoundSongStopCh", base: 0x80685D80, stride: 0x10,  storeSize: 4 }
+];
+
+var REGIONS = [BRANCHES_JP, BRANCHES_US, BRANCHES_EU1, BRANCHES_EU2];
 
 
 //======表示用の変換==============================
@@ -98,22 +132,32 @@ function render(){
   var minAbs = parseFloat(eps.value);
   if (isNaN(minAbs)) minAbs = 0;
 
+  // 選んだリージョンの経路一覧
+  var BRANCHES = REGIONS[Number(reg.value)];
+  var picked   = Number(document.querySelector("input[name=branch]:checked").value);
+  var shown    = picked < 0 ? BRANCHES : [BRANCHES[picked]];
+
+  // 式を表示
+  formulas.innerHTML = BRANCHES.map(function(branch){
+    return branch.name + ": addr = 0x" + hex(branch.base)
+         + " + Z * 0x" + branch.stride.toString(16).toUpperCase();
+  }).join("<br>");
+
   // 16進数で8桁のときだけ解く
   if (!/^[0-9a-f]{8}$/i.test(text)){
     out.innerHTML = "";
     return;
   }
 
-  // キャッシュ側とミラーは同じ場所なので、0xC...で入力されても0x8...に直して両方まとめて調べる
+  // キャッシュ側とミラーは同じ場所なので、0xC...で入力されても0x8...に直して両方まとめて調べる。
   var target = parseInt(text, 16);
   if (target >= 0xC0000000) target -= 0x40000000;
 
   var rows = "";
-  BRANCHES.forEach(function(branch){
+  shown.forEach(function(branch){
 
-
-    // 0xC...への4バイト未満の書き込みは、8バイト境界のブロックごと行われる
-    // 標的が8の倍数でないときはブロックの先頭が標的の4バイト手前になり、そこから書いて後半で標的に届く
+    // 0xC...への4バイト未満の書き込みは、8バイト境界のブロックごと潰れる。
+    // 標的が8の倍数でないときはブロックの先頭が標的の4バイト手前になり、そこから書いて後半で標的に届く。
     var mirror = (target + 0x40000000) >>> 0;
     var writes = [
       { addr: target, bytes: branch.storeSize },
@@ -158,7 +202,8 @@ function render(){
     : "<p>No solution.</p>";
 }
 
-[a, lo, hi, eps].forEach(function(el){ el.oninput = render; });
+[a, lo, hi, eps, reg].forEach(function(el){ el.oninput = render; });
+document.querySelectorAll("input[name=branch]").forEach(function(el){ el.onchange = render; });
 render();
 </script>
 </body>
